@@ -13,7 +13,7 @@ bl_info = {
 
 import os
 import bpy
-from bpy.props import StringProperty, BoolProperty
+from bpy.props import StringProperty, BoolProperty, IntProperty
 from bpy.types import Operator, Menu, AddonPreferences
 
 
@@ -57,6 +57,13 @@ class SmartRecentFilesPreferences(AddonPreferences):
         description="普通点击时，若当前工程已修改且已存盘，自动保存并切换",
         default=True,
     )
+    main_menu_limit: IntProperty(
+        name="主菜单显示数量",
+        description="主菜单直接展示的最近文件数，超出部分收纳进“更多...”子菜单。设小可避免弹窗/快捷收藏夹向上翻转",
+        default=8,
+        min=1,
+        max=50,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -64,6 +71,7 @@ class SmartRecentFilesPreferences(AddonPreferences):
         col.prop(self, "replace_native_menu")
         col.prop(self, "override_shortcut")
         col.prop(self, "auto_save_modified")
+        col.prop(self, "main_menu_limit")
 
         box = layout.box()
         box.label(text="操作说明：", icon='INFO')
@@ -162,6 +170,35 @@ class WM_OT_smart_open_recent(Operator):
         return {'FINISHED'}
 
 
+class TOPBAR_MT_smart_open_recent_discard_more(Menu):
+    bl_idname = "TOPBAR_MT_smart_open_recent_discard_more"
+    bl_label = "更多最近文件 (丢弃改动)"
+
+    def draw(self, context):
+        layout = self.layout
+        recent_files = get_recent_files()
+
+        prefs = context.preferences.addons.get(__name__)
+        main_limit = getattr(prefs.preferences, "main_menu_limit", 8) if prefs else 8
+        limit = context.preferences.filepaths.recent_files
+
+        more_files = recent_files[main_limit:limit]
+        if not more_files:
+            layout.label(text="无更多文件", icon='INFO')
+            return
+
+        for filepath in more_files:
+            filename = os.path.basename(filepath)
+            icon = 'FILE_BACKUP' if filename.endswith(('.blend1', '.blend2')) else 'FILE_BLEND'
+            op = layout.operator(
+                "wm.smart_open_recent",
+                text=filename,
+                icon=icon,
+            )
+            op.filepath = filepath
+            op.discard_changes = True
+
+
 class TOPBAR_MT_smart_open_recent_discard(Menu):
     bl_idname = "TOPBAR_MT_smart_open_recent_discard"
     bl_label = "不保存直接打开 (丢弃改动)"
@@ -174,8 +211,15 @@ class TOPBAR_MT_smart_open_recent_discard(Menu):
             layout.label(text="无最近文件", icon='INFO')
             return
 
+        prefs = context.preferences.addons.get(__name__)
+        main_limit = getattr(prefs.preferences, "main_menu_limit", 8) if prefs else 8
         limit = context.preferences.filepaths.recent_files
-        for filepath in recent_files[:limit]:
+        all_recent = recent_files[:limit]
+
+        main_files = all_recent[:main_limit]
+        has_more = len(all_recent) > main_limit
+
+        for filepath in main_files:
             filename = os.path.basename(filepath)
             icon = 'FILE_BACKUP' if filename.endswith(('.blend1', '.blend2')) else 'FILE_BLEND'
             op = layout.operator(
@@ -185,6 +229,39 @@ class TOPBAR_MT_smart_open_recent_discard(Menu):
             )
             op.filepath = filepath
             op.discard_changes = True
+
+        if has_more:
+            layout.menu("TOPBAR_MT_smart_open_recent_discard_more", text="更多最近文件...", icon='COLLAPSEMENU')
+
+
+class TOPBAR_MT_smart_open_recent_more(Menu):
+    bl_idname = "TOPBAR_MT_smart_open_recent_more"
+    bl_label = "更多最近文件"
+
+    def draw(self, context):
+        layout = self.layout
+        recent_files = get_recent_files()
+
+        prefs = context.preferences.addons.get(__name__)
+        main_limit = getattr(prefs.preferences, "main_menu_limit", 8) if prefs else 8
+        limit = context.preferences.filepaths.recent_files
+
+        more_files = recent_files[main_limit:limit]
+        if not more_files:
+            layout.label(text="无更多文件", icon='INFO')
+            return
+
+        for filepath in more_files:
+            filename = os.path.basename(filepath)
+            icon = 'FILE_BACKUP' if filename.endswith(('.blend1', '.blend2')) else 'FILE_BLEND'
+
+            op = layout.operator(
+                "wm.smart_open_recent",
+                text=filename,
+                icon=icon,
+            )
+            op.filepath = filepath
+            op.discard_changes = False
 
 
 class TOPBAR_MT_smart_open_recent(Menu):
@@ -199,8 +276,15 @@ class TOPBAR_MT_smart_open_recent(Menu):
             layout.label(text="无最近打开文件", icon='INFO')
             return
 
+        prefs = context.preferences.addons.get(__name__)
+        main_limit = getattr(prefs.preferences, "main_menu_limit", 8) if prefs else 8
         limit = context.preferences.filepaths.recent_files
-        for filepath in recent_files[:limit]:
+        all_recent = recent_files[:limit]
+
+        main_files = all_recent[:main_limit]
+        has_more = len(all_recent) > main_limit
+
+        for filepath in main_files:
             filename = os.path.basename(filepath)
             icon = 'FILE_BACKUP' if filename.endswith(('.blend1', '.blend2')) else 'FILE_BLEND'
 
@@ -211,6 +295,9 @@ class TOPBAR_MT_smart_open_recent(Menu):
             )
             op.filepath = filepath
             op.discard_changes = False
+
+        if has_more:
+            layout.menu("TOPBAR_MT_smart_open_recent_more", text="更多最近文件...", icon='COLLAPSEMENU')
 
         layout.separator()
 
@@ -390,7 +477,9 @@ classes = (
     SmartRecentFilesPreferences,
     WM_OT_smart_open_untitled_dialog,
     WM_OT_smart_open_recent,
+    TOPBAR_MT_smart_open_recent_discard_more,
     TOPBAR_MT_smart_open_recent_discard,
+    TOPBAR_MT_smart_open_recent_more,
     TOPBAR_MT_smart_open_recent,
 )
 
