@@ -7,11 +7,12 @@ bl_info = {
     "version": (1, 0, 0),
     "blender": (4, 0, 0),
     "location": "File > Open Recent / Shift+Ctrl+O",
-    "description": "Automatically saves modified projects when opening recent files; Shift+click or submenu to discard changes",
+    "description": "Automatically saves modified projects when opening recent files; Shift+click to discard changes, Ctrl+click to open in new window",
     "category": "User Interface",
 }
 
 import os
+import subprocess
 import bpy
 from bpy.props import StringProperty, BoolProperty, IntProperty
 from bpy.types import Operator, Menu, AddonPreferences
@@ -34,7 +35,7 @@ translations_dict = {
         ("*", "Usage Instructions:"): "操作说明：",
         ("*", "• Normal click: Automatically save modified project and open selected file."): "• 普通点击：当前工程有修改时自动保存并打开新文件。",
         ("*", "• Shift + click: Discard current changes without saving and open selected file."): "• Shift + 点击：不保存直接丢弃当前修改，立即打开新文件。",
-        ("*", "• Submenu: Use 'Open Without Saving...' to discard changes directly."): "• 亦可在子菜单【不保存直接打开...】中直接点击对应文件。",
+        ("*", "• Ctrl + click: Launch and open selected file in a new window (independent instance)."): "• Ctrl + 点击：在新窗口（独立实例）中打开所选文件，保持当前工程不变。",
         ("*", "• Untitled files: Safety prompt warns you if current file has never been saved."): "• 若当前文件从未存过盘（未命名），会弹出安全保护提示，避免误丢失。",
         ("*", "Unsaved Project Warning"): "未保存的新建工程警告",
         ("*", "Current project has never been saved and has unsaved changes!"): "当前工程从未存盘，且存在未保存的修改！",
@@ -45,20 +46,19 @@ translations_dict = {
         ("*", "Smart Open Recent"): "智能打开最近文件",
         ("*", "File Path"): "文件路径",
         ("*", "Discard Changes"): "不保存改动",
-        ("*", "[Open Without Saving] Discard current project changes and open file immediately."): "[不保存打开] 丢弃当前工程所有改动，立即载入目标文件。",
-        ("*", "[Smart Open]\n• Click: Auto-save current changes and open target file.\n• Shift+Click: Discard changes and open immediately."): "[智能打开]\n• 点击：自动保存当前工程改动，无缝打开目标文件。\n• Shift+点击：不保存当前改动，直接强制打开。",
+        ("*", "Open in New Window"): "在新窗口中打开",
+        ("*", "• Click: Auto-save current changes and open.\n• Shift+Click: Discard changes and open without saving.\n• Ctrl+Click: Open in a new window (keep current)."): "• 点击：自动保存当前改动并打开。\n• Shift+点击：不保存直接打开（丢弃改动）。\n• Ctrl+点击：在新窗口中打开（保持当前工程）。",
         ("*", "File does not exist: {}"): "文件不存在: {}",
         ("*", "Auto-saved: {}"): "已自动保存: {}",
         ("*", "Failed to auto-save current project: {}"): "自动保存当前工程失败: {}",
         ("*", "Failed to open file: {}"): "打开文件失败: {}",
-        ("*", "More Recent Files (Discard Changes)"): "更多最近文件 (丢弃改动)",
-        ("*", "Open Without Saving (Discard Changes)"): "不保存直接打开 (丢弃改动)",
+        ("*", "Opened in new window: {}"): "已在新窗口打开: {}",
+        ("*", "Failed to open file in new window: {}"): "在新窗口打开文件失败: {}",
         ("*", "More Recent Files"): "更多最近文件",
         ("*", "More Recent Files..."): "更多最近文件...",
         ("*", "No recent files"): "无最近文件",
         ("*", "No more files"): "无更多文件",
         ("*", "Open Recent"): "打开最近文件",
-        ("*", "Open Without Saving (Discard Changes)..."): "不保存直接打开 (丢弃改动)...",
         ("*", "Clear Recent Files List..."): "清除最近文件列表...",
     }
 }
@@ -130,7 +130,7 @@ class SmartRecentFilesPreferences(AddonPreferences):
         box.label(text="Usage Instructions:", icon='INFO')
         box.label(text="• Normal click: Automatically save modified project and open selected file.")
         box.label(text="• Shift + click: Discard current changes without saving and open selected file.")
-        box.label(text="• Submenu: Use 'Open Without Saving...' to discard changes directly.")
+        box.label(text="• Ctrl + click: Launch and open selected file in a new window (independent instance).")
         box.label(text="• Untitled files: Safety prompt warns you if current file has never been saved.")
 
 
@@ -169,25 +169,24 @@ class WM_OT_smart_open_untitled_dialog(Operator):
 
 
 class WM_OT_smart_open_recent(Operator):
-    """Smart Open Recent: click to auto-save and open; Shift+click to open without saving"""
+    """Smart Open Recent: click to auto-save and open; Shift+click to discard; Ctrl+click for new window"""
     bl_idname = "wm.smart_open_recent"
     bl_label = "Smart Open Recent"
     bl_options = {'INTERNAL'}
 
     filepath: StringProperty(name="File Path")
     discard_changes: BoolProperty(name="Discard Changes", default=False)
+    new_window: BoolProperty(name="Open in New Window", default=False)
 
     @classmethod
     def description(cls, context, properties):
         fp = properties.filepath if properties else ""
-        if properties and properties.discard_changes:
-            desc = _t("[Open Without Saving] Discard current project changes and open file immediately.")
-            return f"{fp}\n\n{desc}" if fp else desc
-        desc = _t("[Smart Open]\n• Click: Auto-save current changes and open target file.\n• Shift+Click: Discard changes and open immediately.")
-        return f"{fp}\n\n{desc}" if fp else desc
+        tip = _t("• Click: Auto-save current changes and open.\n• Shift+Click: Discard changes and open without saving.\n• Ctrl+Click: Open in a new window (keep current).")
+        return f"{fp}\n\n{tip}" if fp else tip
 
     def invoke(self, context, event):
-        # 监听 Shift 修饰键
+        if event.ctrl:
+            self.new_window = True
         if event.shift:
             self.discard_changes = True
         return self.execute(context)
@@ -197,11 +196,20 @@ class WM_OT_smart_open_recent(Operator):
             self.report({'ERROR'}, _t("File does not exist: {}").format(self.filepath))
             return {'CANCELLED'}
 
-        # 获取首选项设置
+        # 1. 在新窗口打开 (Ctrl + 点击)
+        if self.new_window:
+            try:
+                subprocess.Popen([bpy.app.binary_path, self.filepath])
+                self.report({'INFO'}, _t("Opened in new window: {}").format(os.path.basename(self.filepath)))
+                return {'FINISHED'}
+            except Exception as e:
+                self.report({'ERROR'}, _t("Failed to open file in new window: {}").format(e))
+                return {'CANCELLED'}
+
+        # 2. 原窗口逻辑：获取首选项并判断是否需要保存
         prefs = context.preferences.addons.get(__name__)
         should_auto_save = getattr(prefs.preferences, "auto_save_modified", True) if prefs else True
 
-        # 若不丢弃且需要保存
         if not self.discard_changes and should_auto_save and bpy.data.is_dirty:
             if bpy.data.is_saved and bpy.data.filepath:
                 try:
@@ -215,7 +223,7 @@ class WM_OT_smart_open_recent(Operator):
                 bpy.ops.wm.smart_open_untitled_dialog('INVOKE_DEFAULT', filepath=self.filepath)
                 return {'FINISHED'}
 
-        # 直接打开目标文件（EXEC_DEFAULT 规避保存确认弹窗）
+        # 3. 直接打开目标文件（EXEC_DEFAULT 规避保存确认弹窗）
         try:
             bpy.ops.wm.open_mainfile('EXEC_DEFAULT', filepath=self.filepath)
         except Exception as e:
@@ -223,70 +231,6 @@ class WM_OT_smart_open_recent(Operator):
             return {'CANCELLED'}
 
         return {'FINISHED'}
-
-
-class TOPBAR_MT_smart_open_recent_discard_more(Menu):
-    bl_idname = "TOPBAR_MT_smart_open_recent_discard_more"
-    bl_label = "More Recent Files (Discard Changes)"
-
-    def draw(self, context):
-        layout = self.layout
-        recent_files = get_recent_files()
-
-        prefs = context.preferences.addons.get(__name__)
-        main_limit = getattr(prefs.preferences, "main_menu_limit", 8) if prefs else 8
-        limit = context.preferences.filepaths.recent_files
-
-        more_files = recent_files[main_limit:limit]
-        if not more_files:
-            layout.label(text="No more files", icon='INFO')
-            return
-
-        for filepath in more_files:
-            filename = os.path.basename(filepath)
-            icon = 'FILE_BACKUP' if filename.endswith(('.blend1', '.blend2')) else 'FILE_BLEND'
-            op = layout.operator(
-                "wm.smart_open_recent",
-                text=filename,
-                icon=icon,
-            )
-            op.filepath = filepath
-            op.discard_changes = True
-
-
-class TOPBAR_MT_smart_open_recent_discard(Menu):
-    bl_idname = "TOPBAR_MT_smart_open_recent_discard"
-    bl_label = "Open Without Saving (Discard Changes)"
-
-    def draw(self, context):
-        layout = self.layout
-        recent_files = get_recent_files()
-
-        if not recent_files:
-            layout.label(text="No recent files", icon='INFO')
-            return
-
-        prefs = context.preferences.addons.get(__name__)
-        main_limit = getattr(prefs.preferences, "main_menu_limit", 8) if prefs else 8
-        limit = context.preferences.filepaths.recent_files
-        all_recent = recent_files[:limit]
-
-        main_files = all_recent[:main_limit]
-        has_more = len(all_recent) > main_limit
-
-        for filepath in main_files:
-            filename = os.path.basename(filepath)
-            icon = 'FILE_BACKUP' if filename.endswith(('.blend1', '.blend2')) else 'FILE_BLEND'
-            op = layout.operator(
-                "wm.smart_open_recent",
-                text=filename,
-                icon=icon,
-            )
-            op.filepath = filepath
-            op.discard_changes = True
-
-        if has_more:
-            layout.menu("TOPBAR_MT_smart_open_recent_discard_more", text="More Recent Files...", icon='COLLAPSEMENU')
 
 
 class TOPBAR_MT_smart_open_recent_more(Menu):
@@ -316,7 +260,6 @@ class TOPBAR_MT_smart_open_recent_more(Menu):
                 icon=icon,
             )
             op.filepath = filepath
-            op.discard_changes = False
 
 
 class TOPBAR_MT_smart_open_recent(Menu):
@@ -349,15 +292,9 @@ class TOPBAR_MT_smart_open_recent(Menu):
                 icon=icon,
             )
             op.filepath = filepath
-            op.discard_changes = False
 
         if has_more:
             layout.menu("TOPBAR_MT_smart_open_recent_more", text="More Recent Files...", icon='COLLAPSEMENU')
-
-        layout.separator()
-
-        # 辅助子菜单：给不方便按 Shift 的用户备用
-        layout.menu("TOPBAR_MT_smart_open_recent_discard", text="Open Without Saving (Discard Changes)...", icon='CANCEL')
 
         layout.separator()
         layout.operator("wm.clear_recent_files", text="Clear Recent Files List...", icon='TRASH')
@@ -532,8 +469,6 @@ classes = (
     SmartRecentFilesPreferences,
     WM_OT_smart_open_untitled_dialog,
     WM_OT_smart_open_recent,
-    TOPBAR_MT_smart_open_recent_discard_more,
-    TOPBAR_MT_smart_open_recent_discard,
     TOPBAR_MT_smart_open_recent_more,
     TOPBAR_MT_smart_open_recent,
 )
