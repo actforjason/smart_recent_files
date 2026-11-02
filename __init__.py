@@ -7,7 +7,7 @@ bl_info = {
     "version": (1, 0, 0),
     "blender": (4, 0, 0),
     "location": "File > Open Recent / Shift+Ctrl+O",
-    "description": "打开最近文件时自动保存当前工程；按住 Shift 点击或通过子菜单可直接丢弃改动打开",
+    "description": "Automatically saves modified projects when opening recent files; Shift+click or submenu to discard changes",
     "category": "User Interface",
 }
 
@@ -15,6 +15,59 @@ import os
 import bpy
 from bpy.props import StringProperty, BoolProperty, IntProperty
 from bpy.types import Operator, Menu, AddonPreferences
+
+
+# ---------------------------------------------------------------------------
+# 多语言国际化 (i18n Translations)
+# ---------------------------------------------------------------------------
+
+translations_dict = {
+    "zh_HANS": {
+        ("*", "Replace Native 'Open Recent' in File Menu"): "替换原生文件菜单中的“最近打开”",
+        ("*", "Seamlessly replace File > Open Recent with Smart Recent Files"): "勾选后，File 菜单中的 Open Recent 将无缝替换为智能最近菜单",
+        ("*", "Override Shortcut Shift + Ctrl + O"): "接管快捷键 Shift + Ctrl + O",
+        ("*", "Pop up the Smart Recent Files menu directly when pressing Shift+Ctrl+O"): "按 Shift+Ctrl+O 时直接弹出智能最近文件菜单",
+        ("*", "Auto-save Modified on Click"): "默认点击自动保存改动",
+        ("*", "Automatically save and switch if current project has unsaved changes and is saved to disk"): "普通点击时，若当前工程已修改且已存盘，自动保存并切换",
+        ("*", "Main Menu File Limit"): "主菜单显示数量",
+        ("*", "Number of recent files displayed in the main menu; excess files go to 'More...'. Keeps menus compact to prevent flip-up"): "主菜单直接展示的最近文件数，超出部分收纳进“更多...”子菜单。设小可避免弹窗/快捷收藏夹向上翻转",
+        ("*", "Usage Instructions:"): "操作说明：",
+        ("*", "• Normal click: Automatically save modified project and open selected file."): "• 普通点击：当前工程有修改时自动保存并打开新文件。",
+        ("*", "• Shift + click: Discard current changes without saving and open selected file."): "• Shift + 点击：不保存直接丢弃当前修改，立即打开新文件。",
+        ("*", "• Submenu: Use 'Open Without Saving...' to discard changes directly."): "• 亦可在子菜单【不保存直接打开...】中直接点击对应文件。",
+        ("*", "• Untitled files: Safety prompt warns you if current file has never been saved."): "• 若当前文件从未存过盘（未命名），会弹出安全保护提示，避免误丢失。",
+        ("*", "Unsaved Project Warning"): "未保存的新建工程警告",
+        ("*", "Current project has never been saved and has unsaved changes!"): "当前工程从未存盘，且存在未保存的修改！",
+        ("*", "Opening another file will cause current unsaved changes to be lost."): "若继续打开新文件，当前内容将彻底丢失。",
+        ("*", "Save As Current Project First..."): "先另存为保存当前文件...",
+        ("*", "Clicking OK below will discard current changes and open:"): "点击下方【确定】将放弃当前未命名修改并打开：",
+        ("*", "Discarded untitled project changes, opened: {}"): "已丢弃未命名工程改动，打开: {}",
+        ("*", "Smart Open Recent"): "智能打开最近文件",
+        ("*", "File Path"): "文件路径",
+        ("*", "Discard Changes"): "不保存改动",
+        ("*", "[Open Without Saving] Discard current project changes and open file immediately."): "[不保存打开] 丢弃当前工程所有改动，立即载入目标文件。",
+        ("*", "[Smart Open]\n• Click: Auto-save current changes and open target file.\n• Shift+Click: Discard changes and open immediately."): "[智能打开]\n• 点击：自动保存当前工程改动，无缝打开目标文件。\n• Shift+点击：不保存当前改动，直接强制打开。",
+        ("*", "File does not exist: {}"): "文件不存在: {}",
+        ("*", "Auto-saved: {}"): "已自动保存: {}",
+        ("*", "Failed to auto-save current project: {}"): "自动保存当前工程失败: {}",
+        ("*", "Failed to open file: {}"): "打开文件失败: {}",
+        ("*", "More Recent Files (Discard Changes)"): "更多最近文件 (丢弃改动)",
+        ("*", "Open Without Saving (Discard Changes)"): "不保存直接打开 (丢弃改动)",
+        ("*", "More Recent Files"): "更多最近文件",
+        ("*", "More Recent Files..."): "更多最近文件...",
+        ("*", "No recent files"): "无最近文件",
+        ("*", "No more files"): "无更多文件",
+        ("*", "Open Recent"): "打开最近文件",
+        ("*", "Open Without Saving (Discard Changes)..."): "不保存直接打开 (丢弃改动)...",
+        ("*", "Clear Recent Files List..."): "清除最近文件列表...",
+    }
+}
+translations_dict["zh_CN"] = translations_dict["zh_HANS"]
+
+
+def _t(msg):
+    """翻译动态格式化文本"""
+    return bpy.app.translations.pgettext(msg)
 
 
 def get_recent_files():
@@ -32,7 +85,7 @@ def get_recent_files():
                 if path and os.path.exists(path) and path not in files:
                     files.append(path)
     except Exception as e:
-        print(f"[Smart Recent Files] 读取最近文件错误: {e}")
+        print(f"[Smart Recent Files] error reading recent-files.txt: {e}")
 
     return files
 
@@ -41,25 +94,25 @@ class SmartRecentFilesPreferences(AddonPreferences):
     bl_idname = __name__
 
     replace_native_menu: BoolProperty(
-        name="替换原生文件菜单中的“最近打开”",
-        description="勾选后，File 菜单中的 Open Recent 将无缝替换为智能最近菜单",
+        name="Replace Native 'Open Recent' in File Menu",
+        description="Seamlessly replace File > Open Recent with Smart Recent Files",
         default=True,
         update=lambda self, context: update_menu_hook(self, context),
     )
     override_shortcut: BoolProperty(
-        name="接管快捷键 Shift + Ctrl + O",
-        description="按 Shift+Ctrl+O 时直接弹出智能最近文件菜单",
+        name="Override Shortcut Shift + Ctrl + O",
+        description="Pop up the Smart Recent Files menu directly when pressing Shift+Ctrl+O",
         default=True,
         update=lambda self, context: update_keymaps(self, context),
     )
     auto_save_modified: BoolProperty(
-        name="默认点击自动保存改动",
-        description="普通点击时，若当前工程已修改且已存盘，自动保存并切换",
+        name="Auto-save Modified on Click",
+        description="Automatically save and switch if current project has unsaved changes and is saved to disk",
         default=True,
     )
     main_menu_limit: IntProperty(
-        name="主菜单显示数量",
-        description="主菜单直接展示的最近文件数，超出部分收纳进“更多...”子菜单。设小可避免弹窗/快捷收藏夹向上翻转",
+        name="Main Menu File Limit",
+        description="Number of recent files displayed in the main menu; excess files go to 'More...'. Keeps menus compact to prevent flip-up",
         default=8,
         min=1,
         max=50,
@@ -74,17 +127,17 @@ class SmartRecentFilesPreferences(AddonPreferences):
         col.prop(self, "main_menu_limit")
 
         box = layout.box()
-        box.label(text="操作说明：", icon='INFO')
-        box.label(text="• 普通点击：当前工程有修改时自动保存并打开新文件。")
-        box.label(text="• Shift + 点击：不保存直接丢弃当前修改，立即打开新文件。")
-        box.label(text="• 亦可在子菜单【不保存直接打开...】中直接点击对应文件。")
-        box.label(text="• 若当前文件从未存过盘（未命名），会弹出安全保护提示，避免误丢失。")
+        box.label(text="Usage Instructions:", icon='INFO')
+        box.label(text="• Normal click: Automatically save modified project and open selected file.")
+        box.label(text="• Shift + click: Discard current changes without saving and open selected file.")
+        box.label(text="• Submenu: Use 'Open Without Saving...' to discard changes directly.")
+        box.label(text="• Untitled files: Safety prompt warns you if current file has never been saved.")
 
 
 class WM_OT_smart_open_untitled_dialog(Operator):
-    """当前工程未命名时的安全防丢提示"""
+    """Safety confirmation dialog when current untitled project has unsaved changes"""
     bl_idname = "wm.smart_open_untitled_dialog"
-    bl_label = "未保存的新建工程警告"
+    bl_label = "Unsaved Project Warning"
     bl_options = {'INTERNAL'}
 
     filepath: StringProperty()
@@ -92,9 +145,9 @@ class WM_OT_smart_open_untitled_dialog(Operator):
     def execute(self, context):
         try:
             bpy.ops.wm.open_mainfile('EXEC_DEFAULT', filepath=self.filepath)
-            self.report({'INFO'}, f"已丢弃未命名工程改动，打开: {os.path.basename(self.filepath)}")
+            self.report({'INFO'}, _t("Discarded untitled project changes, opened: {}").format(os.path.basename(self.filepath)))
         except Exception as e:
-            self.report({'ERROR'}, f"打开文件失败: {e}")
+            self.report({'ERROR'}, _t("Failed to open file: {}").format(e))
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -104,32 +157,34 @@ class WM_OT_smart_open_untitled_dialog(Operator):
     def draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
-        col.label(text="当前工程从未存盘，且存在未保存的修改！", icon='ERROR')
-        col.label(text="若继续打开新文件，当前内容将彻底丢失。")
+        col.label(text="Current project has never been saved and has unsaved changes!", icon='ERROR')
+        col.label(text="Opening another file will cause current unsaved changes to be lost.")
         col.separator()
         row = col.row()
         row.scale_y = 1.2
-        row.operator("wm.save_as_mainfile", text="先另存为保存当前文件...", icon='FILE_TICK')
+        row.operator("wm.save_as_mainfile", text="Save As Current Project First...", icon='FILE_TICK')
         col.separator()
-        col.label(text="点击下方【确定】将放弃当前未命名修改并打开：")
+        col.label(text="Clicking OK below will discard current changes and open:")
         col.label(text=f"  {os.path.basename(self.filepath)}", icon='FILE_BLEND')
 
 
 class WM_OT_smart_open_recent(Operator):
-    """智能打开最近文件：左键点击自动保存并打开；Shift+点击不保存打开"""
+    """Smart Open Recent: click to auto-save and open; Shift+click to open without saving"""
     bl_idname = "wm.smart_open_recent"
-    bl_label = "智能打开最近文件"
+    bl_label = "Smart Open Recent"
     bl_options = {'INTERNAL'}
 
-    filepath: StringProperty(name="文件路径")
-    discard_changes: BoolProperty(name="不保存改动", default=False)
+    filepath: StringProperty(name="File Path")
+    discard_changes: BoolProperty(name="Discard Changes", default=False)
 
     @classmethod
     def description(cls, context, properties):
         fp = properties.filepath if properties else ""
         if properties and properties.discard_changes:
-            return f"{fp}\n\n[不保存打开] 丢弃当前工程所有改动，立即载入目标文件。"
-        return f"{fp}\n\n[智能打开]\n• 点击：自动保存当前工程改动，无缝打开目标文件。\n• Shift+点击：不保存当前改动，直接强制打开。"
+            desc = _t("[Open Without Saving] Discard current project changes and open file immediately.")
+            return f"{fp}\n\n{desc}" if fp else desc
+        desc = _t("[Smart Open]\n• Click: Auto-save current changes and open target file.\n• Shift+Click: Discard changes and open immediately.")
+        return f"{fp}\n\n{desc}" if fp else desc
 
     def invoke(self, context, event):
         # 监听 Shift 修饰键
@@ -139,7 +194,7 @@ class WM_OT_smart_open_recent(Operator):
 
     def execute(self, context):
         if not self.filepath or not os.path.exists(self.filepath):
-            self.report({'ERROR'}, f"文件不存在: {self.filepath}")
+            self.report({'ERROR'}, _t("File does not exist: {}").format(self.filepath))
             return {'CANCELLED'}
 
         # 获取首选项设置
@@ -151,9 +206,9 @@ class WM_OT_smart_open_recent(Operator):
             if bpy.data.is_saved and bpy.data.filepath:
                 try:
                     bpy.ops.wm.save_mainfile('EXEC_DEFAULT')
-                    self.report({'INFO'}, f"已自动保存: {os.path.basename(bpy.data.filepath)}")
+                    self.report({'INFO'}, _t("Auto-saved: {}").format(os.path.basename(bpy.data.filepath)))
                 except Exception as e:
-                    self.report({'ERROR'}, f"自动保存当前工程失败: {e}")
+                    self.report({'ERROR'}, _t("Failed to auto-save current project: {}").format(e))
                     return {'CANCELLED'}
             else:
                 # 未命名文件安全拦截
@@ -164,7 +219,7 @@ class WM_OT_smart_open_recent(Operator):
         try:
             bpy.ops.wm.open_mainfile('EXEC_DEFAULT', filepath=self.filepath)
         except Exception as e:
-            self.report({'ERROR'}, f"打开文件失败: {e}")
+            self.report({'ERROR'}, _t("Failed to open file: {}").format(e))
             return {'CANCELLED'}
 
         return {'FINISHED'}
@@ -172,7 +227,7 @@ class WM_OT_smart_open_recent(Operator):
 
 class TOPBAR_MT_smart_open_recent_discard_more(Menu):
     bl_idname = "TOPBAR_MT_smart_open_recent_discard_more"
-    bl_label = "更多最近文件 (丢弃改动)"
+    bl_label = "More Recent Files (Discard Changes)"
 
     def draw(self, context):
         layout = self.layout
@@ -184,7 +239,7 @@ class TOPBAR_MT_smart_open_recent_discard_more(Menu):
 
         more_files = recent_files[main_limit:limit]
         if not more_files:
-            layout.label(text="无更多文件", icon='INFO')
+            layout.label(text="No more files", icon='INFO')
             return
 
         for filepath in more_files:
@@ -201,14 +256,14 @@ class TOPBAR_MT_smart_open_recent_discard_more(Menu):
 
 class TOPBAR_MT_smart_open_recent_discard(Menu):
     bl_idname = "TOPBAR_MT_smart_open_recent_discard"
-    bl_label = "不保存直接打开 (丢弃改动)"
+    bl_label = "Open Without Saving (Discard Changes)"
 
     def draw(self, context):
         layout = self.layout
         recent_files = get_recent_files()
 
         if not recent_files:
-            layout.label(text="无最近文件", icon='INFO')
+            layout.label(text="No recent files", icon='INFO')
             return
 
         prefs = context.preferences.addons.get(__name__)
@@ -231,12 +286,12 @@ class TOPBAR_MT_smart_open_recent_discard(Menu):
             op.discard_changes = True
 
         if has_more:
-            layout.menu("TOPBAR_MT_smart_open_recent_discard_more", text="更多最近文件...", icon='COLLAPSEMENU')
+            layout.menu("TOPBAR_MT_smart_open_recent_discard_more", text="More Recent Files...", icon='COLLAPSEMENU')
 
 
 class TOPBAR_MT_smart_open_recent_more(Menu):
     bl_idname = "TOPBAR_MT_smart_open_recent_more"
-    bl_label = "更多最近文件"
+    bl_label = "More Recent Files"
 
     def draw(self, context):
         layout = self.layout
@@ -248,7 +303,7 @@ class TOPBAR_MT_smart_open_recent_more(Menu):
 
         more_files = recent_files[main_limit:limit]
         if not more_files:
-            layout.label(text="无更多文件", icon='INFO')
+            layout.label(text="No more files", icon='INFO')
             return
 
         for filepath in more_files:
@@ -266,14 +321,14 @@ class TOPBAR_MT_smart_open_recent_more(Menu):
 
 class TOPBAR_MT_smart_open_recent(Menu):
     bl_idname = "TOPBAR_MT_smart_open_recent"
-    bl_label = "打开最近文件"
+    bl_label = "Open Recent"
 
     def draw(self, context):
         layout = self.layout
         recent_files = get_recent_files()
 
         if not recent_files:
-            layout.label(text="无最近打开文件", icon='INFO')
+            layout.label(text="No recent files", icon='INFO')
             return
 
         prefs = context.preferences.addons.get(__name__)
@@ -297,15 +352,15 @@ class TOPBAR_MT_smart_open_recent(Menu):
             op.discard_changes = False
 
         if has_more:
-            layout.menu("TOPBAR_MT_smart_open_recent_more", text="更多最近文件...", icon='COLLAPSEMENU')
+            layout.menu("TOPBAR_MT_smart_open_recent_more", text="More Recent Files...", icon='COLLAPSEMENU')
 
         layout.separator()
 
         # 辅助子菜单：给不方便按 Shift 的用户备用
-        layout.menu("TOPBAR_MT_smart_open_recent_discard", text="不保存直接打开 (丢弃改动)...", icon='CANCEL')
+        layout.menu("TOPBAR_MT_smart_open_recent_discard", text="Open Without Saving (Discard Changes)...", icon='CANCEL')
 
         layout.separator()
-        layout.operator("wm.clear_recent_files", text="清除最近文件列表...", icon='TRASH')
+        layout.operator("wm.clear_recent_files", text="Clear Recent Files List...", icon='TRASH')
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +441,7 @@ def draw_smart_topbar_file(self, context):
 
 def draw_appended_menu(self, context):
     self.layout.separator()
-    self.layout.menu("TOPBAR_MT_smart_open_recent", text="智能打开最近文件", icon='FILE_REFRESH')
+    self.layout.menu("TOPBAR_MT_smart_open_recent", text="Smart Open Recent", icon='FILE_REFRESH')
 
 
 def update_menu_hook(prefs, context):
@@ -485,6 +540,11 @@ classes = (
 
 
 def register():
+    try:
+        bpy.app.translations.register(__name__, translations_dict)
+    except Exception as e:
+        print(f"[Smart Recent Files] Translation register error: {e}")
+
     for cls in classes:
         bpy.utils.register_class(cls)
 
@@ -503,6 +563,11 @@ def unregister():
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
+
+    try:
+        bpy.app.translations.unregister(__name__)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
